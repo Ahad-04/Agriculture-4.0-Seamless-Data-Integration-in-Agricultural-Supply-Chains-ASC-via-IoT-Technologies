@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Device Status</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<style>
+  :root{
+    --bg:#0b1320; --card:#121c2b; --text:#e8eef7; --muted:#8ea2bd;
+    --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --bar:#1f2a3b; --accent:#60a5fa;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{max-width:900px;margin:24px auto;padding:0 14px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:720px){.row{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid rgba(255,255,255,.05);border-radius:14px;padding:14px}
+  h1{font-size:20px;margin:0 0 12px 0;display:flex;align-items:center;gap:10px;color:#dbe9ff}
+  .pill{padding:6px 10px;border-radius:999px;font-size:12px;letter-spacing:.04em}
+  .pill.ok{background:rgba(16,185,129,.15);color:var(--ok);border:1px solid rgba(16,185,129,.25)}
+  .pill.off{background:rgba(239,68,68,.15);color:var(--bad);border:1px solid rgba(239,68,68,.25)}
+  .big{font-size:34px;font-weight:800}
+  .muted{color:var(--muted);font-size:12px;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px}
+  .kv{display:flex;justify-content:space-between;align-items:center}
+  .bar{height:12px;background:var(--bar);border-radius:20px;overflow:hidden}
+  .bar>div{height:100%;background:linear-gradient(90deg,var(--accent),#34d399);width:0%}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+  .btn{display:inline-block;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);color:var(--text);text-decoration:none}
+  .btn:hover{background:#0f1725}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .k{font-size:12px;color:var(--muted)}
+  .v{font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>
+      Device Status
+      <span id="onlineBadge" class="pill off">offline</span>
+      <a class="btn" href="/api/csv">Download CSV</a>
+    </h1>
+
+    <div class="row">
+      <div class="card">
+        <div class="muted">Lid (IR)</div>
+        <div id="lidState" class="big">--</div>
+        <div class="k">Last update (UTC)</div>
+        <div id="lastUpdate" class="v mono">--</div>
+      </div>
+
+      <div class="card grid2">
+        <div>
+          <div class="muted">Temperature °C</div>
+          <div class="kv"><div id="tempVal" class="v">--</div><div class="k mono" id="tempPct">0%</div></div>
+          <div class="bar"><div id="tempBar"></div></div>
+        </div>
+        <div>
+          <div class="muted">Humidity %</div>
+          <div class="kv"><div id="humVal" class="v">--</div><div class="k mono" id="humPct">0%</div></div>
+          <div class="bar"><div id="humBar"></div></div>
+        </div>
+        <div>
+          <div class="muted">Pressure hPa</div>
+          <div class="kv"><div id="presVal" class="v">--</div><div class="k mono" id="presPct">0%</div></div>
+          <div class="bar"><div id="presBar"></div></div>
+        </div>
+        <!-- MQ2 Ethane (separate) -->
+        <div>
+          <div class="muted">Ethane (MQ2) — Raw ADC</div>
+          <div class="kv"><div class="v"><span id="mq2Val">--</span></div><div class="k mono" id="mq2Pct">0%</div></div>
+          <div class="bar"><div id="mq2Bar"></div></div>
+        </div>
+        <!-- MQ4 Methane (separate) -->
+        <div>
+          <div class="muted">Methane (MQ4) — Raw ADC</div>
+          <div class="kv"><div class="v"><span id="mq4Val">--</span></div><div class="k mono" id="mq4Pct">0%</div></div>
+          <div class="bar"><div id="mq4Bar"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:14px">
+      <div class="card">
+        <div class="muted">GPS</div>
+        <div class="v mono"><span id="lat">--</span>, <span id="lon">--</span></div>
+      </div>
+      <div class="card">
+        <div class="muted">Raw</div>
+        <div class="mono" id="raw">--</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $  = id => document.getElementById(id);
+  const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+
+  // Map to 0..100 for bars (kept simple/lightweight)
+  const mapTempC = t => clamp((t + 10) * (100/70), 0, 100);  // -10..60C
+  const mapHum   = h => clamp(h, 0, 100);
+  const mapPres  = p => clamp((p-900)*(100/300), 0, 100);    // 900..1200 hPa
+  const mapMQ    = v => clamp((v/1023)*100, 0, 100);         // 10-bit ADC
+
+  function setBar(barEl, pctEl, percent){
+    barEl.style.width = percent.toFixed(0) + "%";
+    pctEl.textContent = percent.toFixed(0) + "%";
+  }
+
+  function lidText(s){ return s ? "OPEN" : "CLOSED"; }
+  function fmtTs(ts){
+    const d = new Date((Number(ts)||0)*1000);
+    return isNaN(d) ? "--" : d.toISOString().replace("T"," ").slice(0,19);
+  }
+
+  async function refreshOnce(){
+    try{
+      const r = await fetch("/api/latest",{cache:"no-store"});
+      const j = await r.json();
+      if(!j.ok || !j.data){ setOffline(); return; }
+      const d = j.data;
+
+      // Online?
+      const fresh = (Date.now()/1000 - (Number(d.timestamp)||0)) < 60;
+      const badge = $("onlineBadge");
+      badge.textContent = fresh ? "online" : "stale";
+      badge.className   = "pill " + (fresh ? "ok" : "off");
+
+      // IR
+      $("lidState").textContent = lidText(Number(d.status)||0);
+      $("lastUpdate").textContent = fmtTs(d.timestamp);
+
+      // Main values
+      $("tempVal").textContent = Number(d.temperature).toFixed(1);
+      $("humVal").textContent  = Number(d.humidity);
+      $("presVal").textContent = Number(d.pressure).toFixed(1);
+      $("lat").textContent     = Number(d.latitude).toFixed(6);
+      $("lon").textContent     = Number(d.longitude).toFixed(6);
+
+      // MQ raw
+      const mq2 = Number(d.mq2)||0;
+      const mq4 = Number(d.mq4)||0;
+      $("mq2Val").textContent = mq2;
+      $("mq4Val").textContent = mq4;
+
+      // Bars
+      setBar($("tempBar"), $("tempPct"), mapTempC(Number(d.temperature)||0));
+      setBar($("humBar"),  $("humPct"),  mapHum(Number(d.humidity)||0));
+      setBar($("presBar"), $("presPct"), mapPres(Number(d.pressure)||0));
+      setBar($("mq2Bar"),  $("mq2Pct"),  mapMQ(mq2));  // Ethane (MQ2)
+      setBar($("mq4Bar"),  $("mq4Pct"),  mapMQ(mq4));  // Methane (MQ4)
+
+      $("raw").textContent = JSON.stringify(d);
+    }catch(e){ setOffline(); }
+  }
+
+  function setOffline(){
+    const badge = $("onlineBadge");
+    badge.textContent = "offline";
+    badge.className   = "pill off";
+  }
+
+  refreshOnce();
+  setInterval(refreshOnce, 10000);
+</script>
+</body>
+</html>

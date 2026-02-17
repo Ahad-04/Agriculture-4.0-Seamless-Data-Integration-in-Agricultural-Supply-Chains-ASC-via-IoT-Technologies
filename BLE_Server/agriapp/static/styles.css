@@ -1,0 +1,55 @@
+/* static/styles.css */
+:root {
+  --bg: #0b1320;
+  --card: #121c2b;
+  --text: #e8eef7;
+  --muted: #7b8aa2;
+  --accent: #34d399;
+  --accent-2: #60a5fa;
+}
+
+body.bg-dark {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+}
+
+.navbar {
+  background: #0a0f18 !important;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 14px;
+  color: var(--text);
+}
+
+.card.stat {
+  padding: 14px 16px;
+}
+
+.card.stat .label {
+  font-size: 12px;
+  letter-spacing: .06em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.card.stat .value {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.table thead th {
+  color: var(--muted);
+  font-weight: 600;
+  border-color: rgba(255,255,255,0.08) !important;
+}
+
+.table td {
+  border-color: rgba(255,255,255,0.05) !important;
+}
+
+.badge#statusBadge {
+  letter-spacing: .04em;
+}

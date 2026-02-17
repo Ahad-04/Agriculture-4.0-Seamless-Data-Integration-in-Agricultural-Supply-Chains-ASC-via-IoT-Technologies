@@ -1,0 +1,15 @@
+.card {
+  @apply bg-white rounded-xl shadow p-4;
+}
+.card-title {
+  @apply text-sm font-semibold text-slate-600 mb-2;
+}
+.kpi-card {
+  @apply bg-white rounded-xl shadow p-4 flex flex-col;
+}
+.kpi-label {
+  @apply text-xs uppercase tracking-wide text-slate-500;
+}
+.kpi-value {
+  @apply text-2xl font-bold mt-1;
+}
