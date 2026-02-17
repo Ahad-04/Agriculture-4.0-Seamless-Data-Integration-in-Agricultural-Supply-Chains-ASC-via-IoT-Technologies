@@ -1,0 +1,51 @@
+Install Python
+Step 1 — Download Python
+
+Go to [https://www.python.org/downloads/](https://www.python.org/downloads/)
+
+
+Step 2 — Run the Installer
+
+When you see the setup screen:
+
+☑ **Check:** “Add python.exe to PATH”
+Then click **Install Now**
+
+Once installed, verify Python by opening **Command Prompt** and typing:
+python --version                 // It should show something like:     Python 3.14.0
+
+
+## 2. Simply goto server Folder
+
+Create a new folder: D:\ChipVista\learning\server
+
+Open **Command Prompt** in that folder:  cd D:\ChipVista\learning\server
+
+
+## 3. Install Flask
+
+Type this command: 
+pip install flask
+
+
+
+## 🪜 5. Run the Server
+
+Run this in your Command Prompt:
+
+python app.py
+
+If everything is correct, you’ll see:
+
+```
+ * Serving Flask app 'server'
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.100.7:5000
+```
+
+---
+
+## 🪜 6. View in Browser
+
+Open your browser and go to:
+👉 [http://127.0.0.1:5000](http://127.0.0.1:5000)

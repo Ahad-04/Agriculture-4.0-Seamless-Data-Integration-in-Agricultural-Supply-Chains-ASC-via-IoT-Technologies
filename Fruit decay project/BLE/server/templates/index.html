@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Fruit Monitor Pro</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0f111a; --card:#1c1f2e; --text:#fff; --blue:#3b82f6; --green:#10b981; --orange:#f59e0b; }
+    body { background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; margin:0; padding:20px; }
+    .container { max-width:1100px; margin:0 auto; }
+    
+    /* Header Controls */
+    .header { display:flex; gap:15px; flex-wrap:wrap; margin-bottom:30px; padding-bottom:20px; border-bottom:1px solid #2d3748; align-items:center; }
+    .btn { padding:12px 20px; border-radius:8px; cursor:pointer; font-weight:700; border:none; transition:0.2s; color:#000; }
+    .btn:disabled { opacity:0.4; cursor:not-allowed; filter:grayscale(1); }
+    .btn-blue { background:var(--blue); color:#fff; } .btn-blue:hover { background:#2563eb; }
+    .btn-green { background:var(--green); color:#fff; } .btn-green:hover { background:#059669; }
+    .btn-download { background:var(--orange); color:#000; } .btn-download:hover { background:#d97706; }
+    
+    #status-area { font-family:monospace; color:var(--green); margin-left:auto; font-weight:600; }
+
+    /* Dashboard Cards */
+    .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:15px; margin-bottom:25px; }
+    .card { background:var(--card); padding:20px; border-radius:14px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.2); }
+    .label { color:#94a3b8; font-size:0.85rem; font-weight:600; letter-spacing:0.05em; margin-bottom:8px; }
+    .val { font-size:2.2rem; font-weight:600; }
+    .unit { font-size:1rem; color:#94a3b8; margin-left:5px; }
+    .status-open { color:#ef4444; } .status-closed { color:var(--green); }
+    
+    /* Graph & Debug */
+    #graph-area { background:var(--card); padding:20px; border-radius:14px; height:350px; display:none; margin-bottom:25px; }
+    #val-raw { background:#090b10; padding:15px; border-radius:10px; font-family:monospace; color:#94a3b8; overflow-x:auto; font-size:0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <button id="btn-show" class="btn btn-blue">LIVE VALUES</button>
+      <button id="btn-graph" class="btn btn-green">UPDATE & SHOW GRAPH</button>
+      <button id="btn-download" class="btn btn-download">DOWNLOAD COMPLETE CSV</button>
+      <div id="status-area">READY</div>
+    </div>
+
+    <!-- LIVE DATA CARDS -->
+    <div class="grid">
+      <div class="card">
+        <div class="label">LID STATUS</div>
+        <div id="val-status" class="val status-closed">--</div>
+        <div class="label" style="margin-top:20px;">LAST LIVE UPDATE</div>
+        <div id="val-dt" style="font-size:1.1rem;">---</div>
+      </div>
+      <div class="card">
+        <div class="label">TEMPERATURE</div>
+        <div class="val"><span id="val-temp">--</span><span class="unit">°C</span></div>
+        <div class="label" style="margin-top:20px;">HUMIDITY</div>
+        <div class="val"><span id="val-hum">--</span><span class="unit">%</span></div>
+      </div>
+      <div class="card">
+        <div class="label">ETHYLENE (MQ2)</div>
+        <div class="val"><span id="val-mq2">--</span><span class="unit">ppm</span></div>
+        <div class="label" style="margin-top:20px;">METHANE (MQ4)</div>
+        <div class="val"><span id="val-mq4">--</span><span class="unit">ppm</span></div>
+      </div>
+    </div>
+
+    <!-- HIDDEN GRAPH AREA -->
+    <div id="graph-area"><canvas id="gasChart"></canvas></div>
+    
+    <!-- DEBUG DATA -->
+    <div class="card"><div class="label">RAW LIVE PACKET</div><pre id="val-raw">Waiting for data...</pre></div>
+  </div>
+
+  <script>
+    // --- DOM Elements ---
+    const get = (id) => document.getElementById(id);
+    const setText = (id, txt) => get(id).textContent = txt;
+    let chart, pollTimer, clearTimer;
+
+    // --- LIVE DATA POLLING ---
+    async function fetchLatest() {
+      try {
+        const res = await fetch('/api/latest');
+        const js = await res.json();
+        if (js.ok && js.data) {
+          renderLive(js.data);
+          if (clearTimer) clearTimeout(clearTimer);
+          clearTimer = setTimeout(() => renderLive(null), 10000); // Clear after 10s
+        }
+      } catch (e) {}
+    }
+
+    function renderLive(d) {
+      if (!d) {
+        ['val-temp','val-hum','val-mq2','val-mq4'].forEach(id => setText(id, '--'));
+        setText('val-status', '--'); get('val-status').className = 'val';
+        return;
+      }
+      setText('val-status', d.status ? 'OPEN' : 'CLOSED');
+      get('val-status').className = 'val ' + (d.status ? 'status-open' : 'status-closed');
+      setText('val-temp', d.temperature.toFixed(1)); setText('val-hum', d.humidity);
+      setText('val-mq2', d.mq2); setText('val-mq4', d.mq4);
+      setText('val-dt', new Date(d.timestamp*1000).toLocaleTimeString());
+      setText('val-raw', JSON.stringify(d, null, 2));
+    }
+    get('btn-show').onclick = fetchLatest;
+    fetchLatest(); // Initial fetch
+
+    // --- POLLING FUNCTION (Used by both syncs) ---
+    function startPolling(onDone) {
+      if (pollTimer) clearInterval(pollTimer); // Clear any old timer
+      
+      pollTimer = setInterval(async () => {
+        try {
+            const res = await fetch('/api/sync_status');
+            const js = await res.json();
+            
+            if (js.done) {
+                clearInterval(pollTimer);
+                onDone(js);
+            } else if (js.in_progress) {
+                setText('status-area', `⏳ RECEIVING... ${(js.size_bytes/1024).toFixed(0)} KB`);
+            }
+        } catch(e) {
+            setText('status-area', "❌ CONNECTION LOST");
+            clearInterval(pollTimer);
+            get('btn-graph').disabled = false;
+            get('btn-download').disabled = false;
+        }
+      }, 1000);
+    }
+
+    // --- FAST GRAPH ACTION ---
+    get('btn-graph').onclick = async () => {
+        get('btn-graph').disabled = true;
+        get('btn-download').disabled = true;
+        setText('status-area', "🚀 FAST SYNCING...");
+        
+        try {
+             const res = await fetch('/api/start_fast_sync');
+             if (!(await res.json()).ok) throw new Error("Sync failed to start");
+             
+             // Poll until done, then load graph
+             startPolling((js) => {
+                 setText('status-area', `✅ GRAPH READY (${(js.size_bytes/1024).toFixed(1)} KB)`);
+                 loadGraph();
+                 get('btn-graph').disabled = false;
+                 get('btn-download').disabled = false;
+             });
+        } catch(e) {
+             setText('status-area', "❌ SYNC FAILED");
+             get('btn-graph').disabled = false;
+             get('btn-download').disabled = false;
+        }
+    };
+
+    async function loadGraph() {
+        try {
+            const res = await fetch('/api/graph_data');
+            const js = await res.json();
+            if (js.ok && js.data.length > 0) {
+                get('graph-area').style.display = 'block';
+                get('graph-area').scrollIntoView({behavior:'smooth'});
+                drawChart(js.data);
+            } else {
+                alert(js.error || "No data points found in the file.");
+            }
+        } catch(e) { alert("Graph Error"); }
+    }
+
+    function drawChart(data) {
+        if (chart) chart.destroy();
+        const ctx = get('gasChart').getContext('2d');
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.map(d => d.t.split(' ')[1] || d.t), // Use time part "HH:MM:SS"
+                datasets: [
+                    { label:'Ethylene (MQ2)', data:data.map(d=>d.mq2), borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.1)', fill:true, tension:0.2 },
+                    { label:'Methane (MQ4)', data:data.map(d=>d.mq4), borderColor:'#10b981', backgroundColor:'rgba(16,185,129,0.1)', fill:true, tension:0.2 }
+                ]
+            },
+            options: { 
+                responsive:true, maintainAspectRatio:false, 
+                scales:{ y:{beginAtZero:true, grid:{color:'#2d3748'}}, x:{grid:{color:'#2d3748'}} },
+                plugins:{legend:{labels:{color:'#fff'}}}
+            }
+        });
+    }
+
+    // --- FULL DOWNLOAD ACTION (Slow) ---
+    get('btn-download').onclick = async () => {
+        if (!confirm("Full sync will overwrite the server's main CSV file and may take several minutes. Continue?")) return;
+        
+        get('btn-graph').disabled = true;
+        get('btn-download').disabled = true;
+        setText('status-area', "⏳ FULL SYNC STARTED...");
+        
+        try {
+             const res = await fetch('/api/start_sync');
+             if (!(await res.json()).ok) throw new Error("Sync failed to start");
+
+             // Poll until done, then trigger download
+             startPolling((js) => {
+                 setText('status-area', `✅ FULL SYNC DONE! (${(js.size_bytes/1024).toFixed(1)} KB)`);
+                 get('btn-graph').disabled = false;
+                 get('btn-download').disabled = false;
+                 window.location.href = '/api/download_csv'; // Trigger download
+             });
+        } catch(e) {
+             setText('status-area', "❌ SYNC FAILED");
+             get('btn-graph').disabled = false;
+             get('btn-download').disabled = false;
+        }
+    };
+  </script>
+</body>
+</html>
