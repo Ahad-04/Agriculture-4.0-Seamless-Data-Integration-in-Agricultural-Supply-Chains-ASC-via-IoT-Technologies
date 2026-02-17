@@ -1,0 +1,426 @@
+% ========== CHAPTER 4: IMPLEMENTATION ==========
+\chapter{Implementation}
+
+The transition from theoretical system architecture to functional prototype necessitates careful integration of hardware components and development of robust software. This chapter details the physical realization and software implementation of both monitoring system configurations.
+
+\section{Hardware Implementation}
+
+\subsection{BLE System Hardware}
+
+The BLE transmission unit integrates Arduino Mega 2560 with peripheral sensors and the HM-10 wireless module. Figure \ref{fig:4.2} illustrates the assembled configuration.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{4.2.png}
+    \caption{BLE transmission unit hardware assembly.}
+    \label{fig:4.2}
+\end{figure}
+
+The unit operates from 5V regulated supply via USB or external 7-12V DC input. Total power draw measures approximately 400 mA under continuous operation, dominated by MQ-series gas sensors and GPS module. A duty-cycled heating strategy reduces average sensor power consumption by 85\% by powering sensors only during the first 10 minutes of each hour.
+
+Gas sensors interface via voltage divider circuits converting variable resistance to voltage signals readable by Arduino's 10-bit ADC. Digital sensors communicate via I²C bus, the GPS module connects via hardware UART at 9600 baud, and the SD card module interfaces through SPI bus. The HM-10 BLE module connects to Serial2 port with key parameters including peripheral operating mode, 0 dBm transmission power, 100 ms advertising interval, and 7.5 ms connection interval.
+
+The ESP32-based reception unit serves dual roles as BLE central device and Wi-Fi access point hosting a local web server. The dual-core 240 MHz processor manages concurrent BLE scanning, HTTP request handling, and JSON data processing.
+
+\subsection{NFC System Hardware}
+
+The NFC writer configuration utilizes Arduino UNO with reduced sensor set and PN532 NFC module. Figure \ref{fig:8.1} shows the assembled hardware.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{8.1.png}
+    \caption{NFC transmission unit hardware.}
+    \label{fig:8.1}
+\end{figure}
+
+The PN532 provides ISO/IEC 14443 Type A/B card emulation at 13.56 MHz via SPI interface. Operating modes include standby consuming 10 µA, active mode during read/write consuming 60 mA for 100-500 ms, and power-down consuming less than 1 µA. Passive MIFARE Classic 1K tags contain 1024 bytes organized as 16 sectors. Adhesive sticker variants affix directly to packaging exterior for easy scanning.
+
+Aggressive power management implements a sleep-sample-store-sleep cycle. The Arduino wakes every 10 minutes, samples sensors, formats data, enters PN532 standby awaiting tag proximity, then returns to sleep. Average consumption approximates 0.3 mA, enabling multi-week battery operation.
+
+The NFC reader unit combines Arduino UNO with PN532 module and 1.3" OLED display. Figure \ref{fig:8.2} shows the assembly.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{8.2.JPG}
+    \caption{NFC reader unit hardware.}
+    \label{fig:8.2}
+\end{figure}
+
+A push button initiates tag scanning with 5-second timeout. At average consumption of 5 mA standby with occasional scanning bursts, a 2000 mAh battery provides approximately 300 hours operation.
+
+\subsection{Hardware Analysis}
+
+Table \ref{tab:hardware-costs} compares component costs between configurations.
+
+\begin{table}[H]
+    \centering
+    \caption{Component cost comparison (USD).}
+    \label{tab:hardware-costs}
+    \begin{tabular}{|l|c|c|}
+        \hline
+        \textbf{Component} & \textbf{BLE} & \textbf{NFC} \\ \hline
+        Microcontroller (Tx) & \$10 & \$6 \\ \hline
+        Microcontroller (Rx) & \$5 & \$6 \\ \hline
+        Gas Sensors & \$4 & \$4 \\ \hline
+        Temp/Humidity & \$4 & \$4 \\ \hline
+        Communication Modules & \$8 & \$12 \\ \hline
+        Additional Components & \$19 & \$15 \\ \hline
+        \textbf{Total} & \textbf{\$55} & \textbf{\$51} \\ \hline
+    \end{tabular}
+\end{table}
+
+Table \ref{tab:power-comparison} quantifies power consumption differences.
+
+\begin{table}[H]
+    \centering
+    \caption{Power consumption comparison.}
+    \label{tab:power-comparison}
+    \begin{tabular}{|l|c|c|}
+        \hline
+        \textbf{Mode} & \textbf{BLE System} & \textbf{NFC System} \\ \hline
+        Transmitter standby & 400 mA & 0.3 mA \\ \hline
+        Transmitter active & 450 mA & 65 mA \\ \hline
+        Receiver standby & 160 mA & 5 mA \\ \hline
+        Battery Life (2000 mAh) & 5 hours & 250 hours \\ \hline
+    \end{tabular}
+\end{table}
+
+\section{Software Implementation}
+
+The software implementation involves two hardware configurations: NFC-based and BLE-based. Although both operate on the same core application, a detailed comparison is required to evaluate their usability and suitability for different application scenarios.
+
+\subsection{NFC Firmware Architecture}
+
+The firmware manages sensor interfacing, calibration algorithms, and data formatting following an event-driven paradigm with periodic sampling timers. Figures \ref{fig:5.1.1} and \ref{fig:5.1.2} illustrate the software architecture.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{5.1.1.png}
+    \caption{Software architecture overview.}
+    \label{fig:5.1.1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{5.1.2.png}
+    \caption{Software block diagram showing module interactions.}
+    \label{fig:5.1.2}
+\end{figure}
+
+The sensor acquisition module implements a multi-step calibration pipeline for gas sensors. The process begins with ADC reading to voltage conversion, followed by voltage to resistance calculation using the voltage divider equation. The resistance ratio relative to calibrated baseline is computed, and concentration estimation is performed via empirical calibration curves stored in non-volatile EEPROM.
+
+Digital sensor libraries abstract low-level timing and register manipulation. Error handling detects invalid readings and substitutes cached previous values for robustness. Raw readings undergo outlier rejection through a median filter operating over 5-sample windows, then aggregation into structured records containing timestamp, environmental parameters, gas concentrations, and GPS coordinates.
+
+\subsection{BLE Communication Protocol}
+
+The BLE implementation employs a custom application-layer protocol providing reliability guarantees atop Bluetooth GATT. Figure \ref{fig:6.3.2} illustrates the transmission-side firmware flow.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{6.3.2.png}
+    \caption{Transmission-side firmware flow diagram.}
+    \label{fig:6.3.1}
+\end{figure}
+
+Each transmitted packet contains a header with magic number for validation, sequence number for duplicate detection, payload length field, sensor data formatted as binary struct, and CRC-16 checksum. The total 41-byte packet requires 3 BLE transmissions per sensor reading.
+
+The ESP32 firmware operates as BLE central device, actively scanning for Arduino-based peripherals. Upon connection, notification subscription enables automatic data push. The reception pipeline implements packet fragment buffering, header validation, CRC verification, acknowledgment transmission, payload parsing, and HTTP POST to the Flask backend.
+
+\subsection{NFC Communication Implementation}
+
+NFC follows a different paradigm where the writer Arduino periodically updates passive tag memory for on-demand retrieval. Efficient utilization of MIFARE Classic 1K's 752-byte capacity requires hierarchical data organization with header information and recent readings in early sectors, and daily summaries in remaining sectors.
+
+Sensor readings are formatted as compact ASCII strings to maximize utilization while maintaining human-readability. The PN532 firmware implements aggressive power management with the module entering low-power standby after writing, and Arduino entering deep sleep between sample intervals. This reduces average consumption from 60 mA to approximately 0.3 mA.
+
+\subsection{Backend and Dashboard}
+
+A Flask-based web application provides RESTful API endpoints for data ingestion, MySQL database for persistent storage, and responsive web frontend for visualization. The ESP32 POSTs sensor readings to the API endpoint, which validates incoming JSON and persists to MySQL with a composite index on device-id and timestamp for query optimization.
+
+Figure \ref{fig:6.4} shows the web dashboard interface.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{6.4.png}
+    \caption{Web dashboard displaying real-time sensor data.}
+    \label{fig:6.4}
+\end{figure}
+
+The dashboard displays status cards with current readings and color-coded thresholds, time-series charts showing 24 hours of data, device status with connection state and timestamps, and export functions for offline analysis. AJAX polling provides automatic updates every 10 seconds without manual page refresh.
+
+\subsection{Integration Challenges}
+
+Several challenges required iterative solutions during development. MQ-series sensors exhibit baseline resistance drift over time; periodic recalibration routines address this by recording new baseline resistance during clean-air periods.
+
+Intermittent BLE disconnections from 2.4 GHz interference are handled through automatic connection recovery with exponential backoff, typically achieving reconnection within 10-30 seconds. SD card write failures during long-duration testing are mitigated through robust file handling with error checking, immediate flushing, verification, and daily log rotation. For NFC tags, wear leveling distributes writes across multiple sectors in round-robin fashion.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\chapter{Experimentation and Results}
+
+The dual-communication monitoring system's effectiveness in detecting fruit freshness indicators and the comparative performance of BLE versus NFC implementations are validated through controlled laboratory experiments. This chapter presents findings from systematic fruit decay studies conducted over multiple rounds.
+
+\section{Experimental Methodology}
+
+Sealed plastic containers (30 cm × 20 cm × 15 cm, approximately 9 liters volume) simulate transportation packaging environments. Each chamber houses 3-5 ripe bananas alongside the sensor module. Chamber sealing employs rubber gaskets creating near-airtight conditions for gas accumulation with gradual pressure equalization.
+
+Two parallel configurations were prepared: Chamber A with BLE transmission and Chamber B with NFC module and exterior-mounted passive tag. Figure \ref{fig:Box1} illustrates the experimental setup.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{Box 1.png}
+    \caption{Experimental fruit decay chamber setup.}
+    \label{fig:Box1}
+\end{figure}
+
+Each experimental round followed a standardized seven-day protocol. On Day 0, fresh bananas at 50-75\% yellow ripeness were introduced with sensor calibration and baseline recording. During Days 1-5, continuous sensor logging proceeded with twice-daily visual inspection documenting coloration and structural changes. Days 6-7 extended monitoring through complete decomposition. Two complete rounds with 3-4 chambers each yielded 6-8 trials for statistical analysis.
+
+\section{BLE System Validation}
+
+Figures \ref{fig:6.1.1} and \ref{fig:6.2.1} illustrate the BLE system architecture and data monitoring flow.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{6.1.1.png}
+    \caption{BLE system architecture overview.}
+    \label{fig:6.1.1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{6.2.1.png}
+    \caption{Data monitoring flow diagram.}
+    \label{fig:6.2.1}
+\end{figure}
+
+Continuous BLE operation over 7-day periods enabled quantification of transmission reliability. Packet loss rate was 0.12\% with 847 packets lost of 705,600 transmitted. Average latency from sensor reading to dashboard display was 47 ms. Connection uptime reached 99.7\% with 23 disconnection events averaging 18 seconds recovery time. Power consumption measured 1.95 W continuous.
+
+\section{NFC System Validation}
+
+Figures \ref{fig:6.6.1} through \ref{fig:6.9} show the NFC hardware and data display interfaces.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{6.6.1.png}
+    \caption{NFC writer hardware configuration.}
+    \label{fig:6.6.1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{6.7.png}
+    \caption{NFC reader hardware assembly.}
+    \label{fig:6.7}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{6.8.png}
+    \caption{Serial monitor output with decoded data.}
+    \label{fig:6.8}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\textwidth]{6.9.png}
+    \caption{OLED display showing summary data.}
+    \label{fig:6.9}
+\end{figure}
+
+NFC system validation quantified performance metrics. Read reliability achieved 100\% success rate over 200+ read attempts. Write reliability reached 99.5\% with 3 failures in 604 attempts, all during low-battery conditions. Read latency was 850 ms from tag detection to complete data retrieval. Power consumption averaged 1.5 mW.
+
+\section{Gas Emission Analysis}
+
+Raw sensor resistance measurements underwent multi-step processing: voltage to resistance conversion via voltage divider equation, baseline normalization against calibrated clean-air resistance, and concentration estimation using empirical power-law relationships.
+
+Three independent chambers were monitored over 7 days, with sensor readings logged every 10 minutes. Figures \ref{fig:exp1-gases-1} and \ref{fig:exp1-gases-2} present gas concentration profiles.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{7.png}
+    \caption{Round 1: Gas concentration time series.}
+    \label{fig:exp1-gases-1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{7.1.png}
+    \caption{Round 1: Gas profile with annotated events.}
+    \label{fig:exp1-gases-2}
+\end{figure}
+
+Ethylene concentration remained near baseline for the first 24 hours, then surged rapidly to peak at 340 ± 25 ppm at hour 60 (Day 2.5), subsequently declining. This pattern matches reported ethylene emission dynamics during climacteric fruit ripening. Methane remained negligible until Day 3, followed by exponential increase reaching maximum 520 ± 40 ppm at Day 5, indicating anaerobic microbial activity. The 60-hour lag between ethylene and methane peaks provides distinct biomarkers for different decay stages.
+
+Figures \ref{fig:exp1-env-1} and \ref{fig:exp1-env-2} show environmental parameters and correlation analysis.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{7.2.png}
+    \caption{Round 1: Environmental parameters overlay.}
+    \label{fig:exp1-env-1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{7.3.png}
+    \caption{Round 1: Correlation analysis.}
+    \label{fig:exp1-env-2}
+\end{figure}
+
+Statistical analysis revealed strong positive correlation (r=0.82) between temperature rise and MQ-2 ethylene, and moderate correlation (r=0.61) between humidity and MQ-4 methane.
+
+\section{Gas Index Validation}
+
+A normalized Gas Index (0-100 scale) provides simplified spoilage assessment. Figures \ref{fig:exp1-index-1} and \ref{fig:exp1-index-2} present Gas Index performance.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{7.4.png}
+    \caption{Round 1: Normalized Gas Index.}
+    \label{fig:exp1-index-1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{7.5.png}
+    \caption{Round 1: Gas Index validation.}
+    \label{fig:exp1-index-2}
+\end{figure}
+
+\section{Round 2 Results}
+
+Experimental protocols were repeated 4-6 weeks after Round 1 for validation. Figures \ref{fig:exp2-gases-1} through \ref{fig:exp2-extended-2} present Round 2 results.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{7.6.png}
+    \caption{Round 2: Gas concentration profiles.}
+    \label{fig:exp2-gases-1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{7.7.png}
+    \caption{Round 2: Environmental parameters.}
+    \label{fig:exp2-gases-2}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{7.8.png}
+    \caption{Round 2: Extended monitoring to Day 9.}
+    \label{fig:exp2-extended-1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{7.9.png}
+    \caption{Round 2: Late-stage temperature and humidity.}
+    \label{fig:exp2-extended-2}
+\end{figure}
+
+% Table \ref{tab:round-comparison} compares key metrics between rounds.
+
+\begin{table}[H]
+    \centering
+    \caption{Inter-round comparison of gas emission metrics.}
+    \label{tab:round-comparison}
+    \begin{tabular}{|l|c|c|c|}
+        \hline
+        \textbf{Metric} & \textbf{Round 1} & \textbf{Round 2} & \textbf{p-value} \\ \hline
+        MQ-2 Peak (ppm) & 340 ± 25 & 355 ± 30 & 0.31 \\ \hline
+        MQ-2 Peak Time (hours) & 60 ± 4 & 66 ± 5 & 0.18 \\ \hline
+        MQ-4 Peak (ppm) & 520 ± 40 & 485 ± 35 & 0.14 \\ \hline
+        MQ-4 Peak Time (hours) & 120 ± 8 & 114 ± 6 & 0.24 \\ \hline
+    \end{tabular}
+\end{table}
+
+Two-sample t-tests revealed no statistically significant differences between rounds (p$>$0.05), confirming experimental reproducibility with a coefficient of variation below 10\%.
+
+\section{Cross-Round Analysis}
+
+Figures \ref{fig:combined-mq2} through \ref{fig:combined-index-2} present comprehensive comparisons across all trials.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{7.10.png}
+    \caption{Combined analysis: MQ-2 profiles across all trials.}
+    \label{fig:combined-mq2}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{7.11.png}
+    \caption{Combined analysis: MQ-4 profiles across all trials.}
+    \label{fig:combined-mq4}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{7.12.png}
+    \caption{Gas Index across all experimental chambers.}
+    \label{fig:combined-index-1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.90\textwidth]{7.13.png}
+    \caption{ROC analysis for Gas Index spoilage detection.}
+    \label{fig:combined-index-2}
+\end{figure}
+
+ROC analysis identifies optimal operating point at GI=40, achieving 100\% sensitivity with 98\% specificity. Area under curve of 0.997 indicates excellent discriminatory power.
+
+\section{Comparative Performance Summary}
+
+Table \ref{tab:comm-reliability} quantifies communication reliability for both systems.
+
+\begin{table}[H]
+    \centering
+    \caption{Communication reliability comparison.}
+    \label{tab:comm-reliability}
+    \begin{tabular}{|l|c|c|}
+        \hline
+        \textbf{Metric} & \textbf{BLE} & \textbf{NFC} \\ \hline
+        Data Points Collected & 3,024 & 1,008 \\ \hline
+        Successful Transmissions & 99.88\% & 99.50\% \\ \hline
+        Recovery Time & 12 ± 3 s & Manual retry \\ \hline
+        Maximum Data Gaps & 20 s & 10 min \\ \hline
+    \end{tabular}
+\end{table}
+
+The two-order-of-magnitude power consumption difference fundamentally constrains deployment scenarios: BLE systems require substantial battery capacity or external power, while NFC systems achieve weeks-to-months operation from compact battery packs.
